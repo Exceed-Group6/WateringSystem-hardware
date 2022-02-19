@@ -1,0 +1,298 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <ESP32Servo.h>
+#include <math.h>
+
+int tree_id;
+int user_info;
+int humidity;
+int mode_status;
+int duration;
+int user_water;
+
+int light;
+int tempurature;
+
+int moisture;
+
+int resistorVoltage;
+float ldrVoltage;
+int ldrRawData;
+float ldrResistance;
+int ldrLux;
+
+char str[2000];
+int servo_pin = 23;
+int soil_analog = 34;
+int redpin = 15; // select the pin for the red LED 
+int bluepin = 21; // select the pin for the blue LED 
+int greenpin = 19 ;
+int led = 22;
+int ldr = 33;
+int analogCapteur = 32;
+
+const char* url_get = "https://ecourse.cpe.ku.ac.th/exceed06/api/command/1";
+const char* url_post = "https://ecourse.cpe.ku.ac.th/exceed06/api/updatetree";
+const char* url_post_moter = "https://ecourse.cpe.ku.ac.th/exceed06/api/watered/1";
+
+const char* ssid = "Pang";
+const char* password = "kururu966";
+
+const int _size = 2*JSON_OBJECT_SIZE(6);
+
+StaticJsonDocument<_size> JSONPost;
+StaticJsonDocument<_size> JSONGet;
+
+Servo myservo;
+
+static TaskHandle_t Task1 = NULL;
+
+void RGB_tusk(void *parameter){
+  while(1){
+   if(humidity == moisture){
+     digitalWrite(bluepin, LOW);
+     digitalWrite(greenpin, LOW);
+     digitalWrite(redpin,HIGH);
+    }
+   else if(humidity < moisture){
+     digitalWrite(redpin, LOW);
+     digitalWrite(greenpin, LOW);
+     digitalWrite(bluepin,HIGH);
+  }
+   else if(humidity > moisture){
+     digitalWrite(redpin, LOW);
+     digitalWrite(bluepin, LOW);
+     digitalWrite(greenpin,HIGH);
+  }
+}
+}
+
+void WiFi_Connect(){
+  WiFi.disconnect();
+  WiFi.begin(ssid,password);
+  while(WiFi.status()!=WL_CONNECTED){
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+  }
+
+  Serial.println("Connected to the WiFi network");
+  Serial.print("IP Address : ");
+  Serial.println(WiFi.localIP());
+}
+
+
+void _get() {
+  if(WiFi.status() == WL_CONNECTED){
+    HTTPClient http;
+
+    http.begin(url_get);
+
+    int httpCode = http.GET();
+    
+    if(httpCode == HTTP_CODE_OK){
+      String payload = http.getString();
+      DeserializationError err = deserializeJson(JSONGet, payload);
+      if(err){
+        Serial.print(F("deserializeJson() failed with code "));
+        Serial.println(err.c_str());
+      } else{        
+        tree_id = JSONGet["tree_id"];
+        user_info = JSONGet["user_info"];
+        humidity = JSONGet["humidity"];
+        mode_status = JSONGet["mode_status"];
+        duration = JSONGet["duration"];//ทำเป็นวินาที
+        user_water = JSONGet["user_water"];
+                Serial.println("GET result");
+                Serial.println("tree_id");
+
+        Serial.println(tree_id);
+                Serial.println("user_info");
+
+        Serial.println(user_info);
+                Serial.println("humidity");
+
+        Serial.println(humidity);
+                Serial.println("mode_status");
+
+        Serial.println(mode_status);
+                Serial.println("duraion");
+
+        Serial.println(duration);
+                Serial.println("user_water");
+
+        Serial.println(user_water);
+        
+      }
+    } else{
+      Serial.println(httpCode);
+      Serial.println("ERROR on HTTP Request");
+    }
+  } else{
+    WiFi_Connect();
+  }
+  delay(100);
+}
+
+void _put(){
+  if(WiFi.status() == WL_CONNECTED){
+    HTTPClient http;
+    
+    http.begin(url_post);
+    http.addHeader("Content-Type", "application/json");
+    
+    JSONPost["tree_id"] = tree_id;
+    JSONPost["light"] = light;
+    JSONPost["humidity"] = moisture;
+    JSONPost["temp"] = tempurature;
+    
+    serializeJson(JSONPost, str);
+    Serial.println(str);
+    int httpResponseCode = http.PUT(str);
+
+    if(httpResponseCode>0){
+      String payload = http.getString();
+      Serial.println(httpResponseCode);
+      Serial.println("PUT result");
+      Serial.println(payload);
+    } else{
+      Serial.println(httpResponseCode);
+      Serial.println("ERROR on HTTP Request");
+    }
+  } else{
+    WiFi_Connect();
+  }
+  delay(100);
+}
+
+void _put_moter(){
+  if(WiFi.status() == WL_CONNECTED){
+    HTTPClient http;
+    
+    http.begin(url_post_moter);
+    http.addHeader("Content-Type", "application/json");
+    
+    JSONPost["user_water"] = 0;
+    
+    serializeJson(JSONPost, str);
+    int httpResponseCode = http.PUT(str);
+
+    if(httpResponseCode>0){
+      String payload = http.getString();
+      Serial.println(httpResponseCode);
+      Serial.println("PUT result moter");
+      Serial.println(payload);
+    } else{
+      Serial.println(httpResponseCode);
+      Serial.println("ERROR on HTTP Request");
+    }
+  } else{
+    WiFi_Connect();
+  }
+  delay(100);
+}
+
+void lighting(){
+  ldrRawData = 1024-analogRead(ldr);
+  resistorVoltage = (float)ldrRawData / 1023 * 5;
+  ldrVoltage = 5 - resistorVoltage;
+  ldrResistance = ldrVoltage/resistorVoltage * 5000;
+  ldrLux = 12518931 * pow(ldrResistance, -1.405); 
+  light = ldrLux;
+  
+}
+
+void _tempurature(){
+  
+  float Analog;
+  int readVal = analogRead(analogCapteur);
+  double temp =  Thermistor(readVal);
+  tempurature = temp;
+}
+
+
+void watering(){
+  Serial.println("hello");
+  duration = duration*1000;
+  if(mode_status == 1){
+    //ต้องไปดูท่าความชื้นอีกที
+    if(humidity > moisture){
+       myservo.write(0);
+       delay(1000);
+       myservo.write(90);
+       digitalWrite(led,HIGH);
+       delay(1000);
+       myservo.write(0);
+       delay(1000);
+       digitalWrite(led,LOW);
+        delay(1000);
+    }
+  }else if(mode_status == 0){
+    if (user_water == 1){
+    _put_moter();
+    myservo.write(0);
+    delay(1000);
+    myservo.write(90);
+    digitalWrite(led,HIGH);
+    delay(duration);
+    myservo.write(0);
+    delay(1000);
+    digitalWrite(led,LOW);}
+    delay(1000);
+  }
+
+}
+void setup ()
+{
+Serial.begin(9600); 
+delay(2000);
+
+pinMode(ldr,INPUT);
+pinMode(soil_analog,INPUT);
+pinMode(analogCapteur,INPUT);
+
+pinMode(led,OUTPUT);
+pinMode(redpin,OUTPUT);
+pinMode(bluepin,OUTPUT);
+pinMode(greenpin,OUTPUT);
+
+digitalWrite(led, LOW);
+digitalWrite(redpin, LOW);
+digitalWrite(bluepin, LOW);
+digitalWrite(greenpin, LOW);
+
+myservo.attach(servo_pin);
+analogReadResolution(10);
+WiFi_Connect();
+
+xTaskCreatePinnedToCore(RGB_tusk, "Task_1", 1024, NULL, 1, &Task1, 1);
+
+}
+
+void loop (){
+  delay(1000);
+  _get();
+  humidity = humidity*10.24;
+  Serial.print("humidity");
+  Serial.println(humidity);
+  moisture = 1024-analogRead(soil_analog);
+  lighting();
+  _tempurature();
+
+  if(user_info == 1){
+    watering();
+    _put();
+  }
+  else{
+    Serial.println("information not found");
+  }
+  delay(100);//วนทุก 10 วิ
+
+}
+double Thermistor(int RawADC){
+    double Temp;
+    Temp = log(10000.0 * abs((175.0 / (float)RawADC - 1)));
+    Temp = 1 / (0.001129148 + (0.000234125 + (0.0000000876741 * Temp * Temp )) * Temp );
+    Temp = Temp - 273.15;            // Kelvin in °C
+    return Temp;
+}
